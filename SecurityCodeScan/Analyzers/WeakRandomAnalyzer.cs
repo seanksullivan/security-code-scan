@@ -4,50 +4,49 @@ using Microsoft.CodeAnalysis.Diagnostics;
 using SecurityCodeScan.Analyzers.Locale;
 using SecurityCodeScan.Analyzers.Utils;
 using CSharp = Microsoft.CodeAnalysis.CSharp;
-using CSharpSyntax = Microsoft.CodeAnalysis.CSharp.Syntax;
 using VB = Microsoft.CodeAnalysis.VisualBasic;
-using VBSyntax = Microsoft.CodeAnalysis.VisualBasic.Syntax;
 
 namespace SecurityCodeScan.Analyzers
 {
-    [DiagnosticAnalyzer(LanguageNames.CSharp, LanguageNames.VisualBasic)]
-    public class WeakRandomAnalyzer : DiagnosticAnalyzer
+    [DiagnosticAnalyzer(LanguageNames.CSharp)]
+    public class WeakRandomAnalyzerCSharp : WeakRandomAnalyzer
+    {
+        public override void Initialize(AnalysisContext context)
+        {
+            context.RegisterSyntaxNodeAction(ctx => VisitSyntaxNode(ctx, CSharpSyntaxNodeHelper.Default), CSharp.SyntaxKind.InvocationExpression);
+        }
+    }
+
+    [DiagnosticAnalyzer(LanguageNames.VisualBasic)]
+    public class WeakRandomAnalyzerVisualBasic : WeakRandomAnalyzer
+    {
+        public override void Initialize(AnalysisContext context)
+        {
+            context.RegisterSyntaxNodeAction(ctx => VisitSyntaxNode(ctx, VBSyntaxNodeHelper.Default), VB.SyntaxKind.InvocationExpression);
+        }
+    }
+
+    public abstract class WeakRandomAnalyzer : DiagnosticAnalyzer
     {
         private static readonly DiagnosticDescriptor Rule = LocaleUtil.GetDescriptor("SCS0005");
 
-        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(Rule);
+        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
 
-        public override void Initialize(AnalysisContext context)
+        protected static void VisitSyntaxNode(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
         {
-            context.RegisterSyntaxNodeAction(VisitSyntaxNode, CSharp.SyntaxKind.InvocationExpression);
-            context.RegisterSyntaxNodeAction(VisitSyntaxNode, VB.SyntaxKind.InvocationExpression);
-        }
+            SyntaxNode expression = nodeHelper.GetInvocationExpressionNode(ctx.Node);
 
-        private static void VisitSyntaxNode(SyntaxNodeAnalysisContext ctx)
-        {
-            SyntaxNode node;
-            SyntaxNode expression;
-
-            if (ctx.Node.Language == LanguageNames.CSharp)
-            {
-                node       = ctx.Node as CSharpSyntax.InvocationExpressionSyntax;
-                expression = ((CSharpSyntax.InvocationExpressionSyntax)node)?.Expression;
-            }
-            else
-            {
-                node       = ctx.Node as VBSyntax.InvocationExpressionSyntax;
-                expression = ((VBSyntax.InvocationExpressionSyntax)node)?.Expression;
-            }
-
-            if (node == null)
+            if (expression == null)
                 return;
 
-            var symbol = ctx.SemanticModel.GetSymbolInfo(node).Symbol;
+            var symbol = ctx.SemanticModel.GetSymbolInfo(ctx.Node).Symbol;
+            if (symbol == null)
+                return;
 
             //System.Random.Next()
-            if (AnalyzerUtil.SymbolMatch(symbol, type: "Random", name: "Next")      ||
-                AnalyzerUtil.SymbolMatch(symbol, type: "Random", name: "NextBytes") ||
-                AnalyzerUtil.SymbolMatch(symbol, type: "Random", name: "NextDouble"))
+            if (symbol.IsType("System.Random.Next")      ||
+                symbol.IsType("System.Random.NextBytes") ||
+                symbol.IsType("System.Random.NextDouble"))
             {
                 var diagnostic = Diagnostic.Create(Rule, expression.GetLocation());
                 ctx.ReportDiagnostic(diagnostic);

@@ -9,6 +9,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.CodeAnalysis.VisualBasic;
+using Microsoft.VisualStudio.TestTools.UnitTesting.Logging;
 
 namespace SecurityCodeScan.Test.Helpers
 {
@@ -43,7 +44,7 @@ namespace SecurityCodeScan.Test.Helpers
             public MetadataReference GetMetadata(string assemblyName)
             {
                 MetadataReference ret;
-                string            name = assemblyName.ToLower();
+                string            name = assemblyName.ToUpperInvariant();
                 lock (Assemblies)
                 {
                     if (Assemblies.TryGetValue(name, out ret))
@@ -75,10 +76,10 @@ namespace SecurityCodeScan.Test.Helpers
         private static readonly CompilationOptions CSharpDefaultOptions      = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary);
         private static readonly CompilationOptions VisualBasicDefaultOptions = new VisualBasicCompilationOptions(OutputKind.DynamicallyLinkedLibrary);
 
-        internal const string DefaultFilePathPrefix = "Test";
-        internal const string CSharpDefaultFileExt  = "cs";
-        internal const string VisualBasicDefaultExt = "vb";
-        internal const string TestProjectName       = "TestProject";
+        public const string DefaultFilePathPrefix = "Test";
+        public const string CSharpDefaultFileExt  = "cs";
+        public const string VisualBasicDefaultExt = "vb";
+        private const string TestProjectName       = "TestProject";
 
         #region  Get Diagnostics
 
@@ -92,19 +93,27 @@ namespace SecurityCodeScan.Test.Helpers
         /// <param name="references">Additional referenced modules</param>
         /// <param name="includeCompilerDiagnostics">Get compiler diagnostics too</param>
         /// <returns>An IEnumerable of Diagnostics that surfaced in the source code, sorted by Location</returns>
-        private static async Task<Diagnostic[]> GetSortedDiagnostics(
+        private static async Task<(Diagnostic[] Diagnostics, IEnumerable<Document> Documents)> GetSortedDiagnostics(
             string[]                           sources,
             string                             language,
             ImmutableArray<DiagnosticAnalyzer> analyzers,
+            AnalyzerOptions                    options,
             Version                            dotNetVersion,
             CancellationToken                  cancellationToken,
             IEnumerable<MetadataReference>     references                 = null,
             bool                               includeCompilerDiagnostics = false)
         {
-            return await GetSortedDiagnosticsFromDocuments(analyzers,
-                                                           GetDocuments(sources, dotNetVersion, language, references),
+            foreach (var source in sources)
+            {
+                Logger.LogMessage("{0}", source);
+            }
+
+            var documents = GetDocuments(sources, dotNetVersion, language, references);
+            return (await GetSortedDiagnosticsFromDocuments(analyzers,
+                                                           options,
+                                                           documents,
                                                            cancellationToken,
-                                                           includeCompilerDiagnostics).ConfigureAwait(false);
+                                                           includeCompilerDiagnostics).ConfigureAwait(false), documents);
         }
 
         /// <summary>
@@ -118,6 +127,7 @@ namespace SecurityCodeScan.Test.Helpers
         /// <returns>An IEnumerable of Diagnostics that surfaced in the source code, sorted by Location</returns>
         protected static async Task<Diagnostic[]> GetSortedDiagnosticsFromDocuments(
             ImmutableArray<DiagnosticAnalyzer> analyzers,
+            AnalyzerOptions                    options,
             IEnumerable<Document>              documents,
             CancellationToken                  cancellationToken,
             bool                               includeCompilerDiagnostics = false)
@@ -132,7 +142,7 @@ namespace SecurityCodeScan.Test.Helpers
             foreach (var project in projects)
             {
                 var compilation              = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-                var compilationWithAnalyzers = compilation.WithAnalyzers(analyzers);
+                var compilationWithAnalyzers = compilation.WithAnalyzers(analyzers, options);
                 var diags                    = includeCompilerDiagnostics
                                                    ? await compilationWithAnalyzers.GetAllDiagnosticsAsync().ConfigureAwait(false)
                                                    : await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync().ConfigureAwait(false);
@@ -250,7 +260,7 @@ namespace SecurityCodeScan.Test.Helpers
             int count = 0;
             foreach (var source in sources)
             {
-                var newFileName = fileNamePrefix + count + "." + fileExt;
+                var newFileName = $"{fileNamePrefix}{count}.{fileExt}";
                 var documentId  = DocumentId.CreateNewId(projectId, debugName: newFileName);
                 solution        = solution.AddDocument(documentId, newFileName, SourceText.From(source));
                 count++;

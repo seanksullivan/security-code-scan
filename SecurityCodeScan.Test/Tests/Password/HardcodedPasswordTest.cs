@@ -12,11 +12,12 @@ namespace SecurityCodeScan.Test.Password
     [TestClass]
     public class HardcodedPasswordTest : DiagnosticVerifier
     {
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new[] { new TaintAnalyzer() };
+            return new DiagnosticAnalyzer[] { new TaintAnalyzerCSharp(), new TaintAnalyzerVisualBasic(), };
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task HardCodePasswordDerivedBytes()
         {
@@ -57,6 +58,7 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task HardCodePasswordDerivedBytesFalsePositive()
         {

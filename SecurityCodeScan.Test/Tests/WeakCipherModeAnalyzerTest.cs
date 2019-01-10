@@ -12,17 +12,21 @@ namespace SecurityCodeScan.Test
     [TestClass]
     public class WeakCipherModeAnalyzerTest : DiagnosticVerifier
     {
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new[] { new WeakCipherModeAnalyzer() };
+            return new DiagnosticAnalyzer[] { new WeakCipherModeAnalyzerCSharp(), new WeakCipherModeAnalyzerVisualBasic() };
         }
 
+        [TestCategory("Detect")]
         [DataRow("CipherMode.ECB", "SCS0012")]
         [DataRow("CipherMode.OFB", "SCS0013")]
         [DataRow("CipherMode.CBC", "SCS0011")]
         [DataRow("ECB",            "SCS0012")]
         [DataRow("OFB",            "SCS0013")]
         [DataRow("CBC",            "SCS0011")]
+        [DataRow("CM.ECB",         "SCS0012")]
+        [DataRow("CM.OFB",         "SCS0013")]
+        [DataRow("CM.CBC",         "SCS0011")]
         [DataTestMethod]
         public async Task WeakCipherMode(string name, string id)
         {
@@ -30,6 +34,7 @@ namespace SecurityCodeScan.Test
 using System.Security.Cryptography;
 #pragma warning disable 8019
     using static System.Security.Cryptography.CipherMode;
+    using CM = System.Security.Cryptography.CipherMode;
 #pragma warning restore 8019
 
 class WeakCipherMode
@@ -48,6 +53,7 @@ class WeakCipherMode
 Imports System.Security.Cryptography
 #Disable Warning BC50001
     Imports System.Security.Cryptography.CipherMode
+    Imports CM = System.Security.Cryptography.CipherMode
 #Enable Warning BC50001
 
 Class WeakCipherMode
@@ -68,10 +74,11 @@ End Class
             await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task WeakCipherModeECB()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using System;
 using System.IO;
 using System.Security.Cryptography;
@@ -99,7 +106,7 @@ class WeakCipherMode
 }
 ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports System
 Imports System.IO
 Imports System.Security.Cryptography
@@ -134,10 +141,11 @@ End Class
             await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task WeakCipherModeOFB()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using System;
 using System.IO;
 using System.Security.Cryptography;
@@ -163,7 +171,7 @@ class WeakCipherMode
     }
 }";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports System
 Imports System.IO
 Imports System.Security.Cryptography
@@ -197,10 +205,11 @@ End Class
             await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task WeakCipherModeCBC()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using System;
 using System.IO;
 using System.Security.Cryptography;
@@ -249,7 +258,7 @@ class WeakCipherMode
     }
 }";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports System
 Imports System.IO
 Imports System.Security.Cryptography
@@ -301,7 +310,5 @@ End Class
             await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
             await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
         }
-
-        //TODO: Add tests to trigger the analyzer. 
     }
 }

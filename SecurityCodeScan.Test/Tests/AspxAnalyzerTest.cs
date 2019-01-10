@@ -13,6 +13,7 @@ namespace SecurityCodeScan.Test
     {
         public AspxAnalyzerTest() : base(new HtmlValidateRequestAnalyzer()) { }
 
+        [TestCategory("Detect")]
         [DataRow("<%@page validateRequest=\"false\"")]
         [DataRow("<%  @page validateRequest=\"false\"")]
         [DataRow("<% @   page validateRequest=\"false\"")]
@@ -22,7 +23,7 @@ namespace SecurityCodeScan.Test
         [DataTestMethod]
         public async Task HtmlValidateRequestVulnerable(string element)
         {
-            string html = $@"
+            var html = $@"
 {element} Title=""About"" Language=""C#"" %>
 
 <asp:Content ID=""BodyContent"" ContentPlaceHolderID=""MainContent"" runat=""server"">
@@ -32,7 +33,7 @@ namespace SecurityCodeScan.Test
 </asp:Content>
               ";
 
-            var path     = Path.GetTempFileName();
+            var path     = Guid.NewGuid().ToString();
             var expected = new
             {
                 Id      = WebConfigAnalyzer.RuleValidateRequest.Id,
@@ -47,12 +48,13 @@ namespace SecurityCodeScan.Test
                                                                    && d.GetMessage(null) == expected.Message)), Times.Once);
         }
 
+        [TestCategory("Safe")]
         [DataRow("<%@page validateRequest=\"true\"")]
         [DataRow("<%@page VAlidateRequest=\"  TRue  \"")]
         [TestMethod]
         public async Task HtmlValidateRequestSafe(string element)
         {
-            string html = $@"
+            var html = $@"
 {element} Title=""About"" Language=""C#"" %>
 
 <asp:Content ID=""BodyContent"" ContentPlaceHolderID=""MainContent"" runat=""server"">
@@ -62,7 +64,7 @@ namespace SecurityCodeScan.Test
 </asp:Content>
               ";
 
-            var diagnostics = await Analyze(html, Path.GetTempFileName()).ConfigureAwait(false);
+            var diagnostics = await Analyze(html, Guid.NewGuid().ToString()).ConfigureAwait(false);
             diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleValidateRequest.Id)), Times.Never);
         }
     }

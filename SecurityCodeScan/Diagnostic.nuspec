@@ -1,8 +1,8 @@
 ﻿<?xml version="1.0"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
-  <metadata>
+  <metadata minClientVersion="2.8">
     <id>SecurityCodeScan</id>
-    <version>2.7.0</version>
+    <version>3.0.0</version>
     <title>Security Code Scan</title>
     <authors>Jaroslav Lobačevski, Philippe Arteau</authors>
     <owners>Jaroslav Lobačevski</owners>
@@ -21,7 +21,8 @@
   </metadata>
   <!-- The convention for analyzers is to put language agnostic dlls in analyzers\portable50 and language specific analyzers in either analyzers\portable50\cs or analyzers\portable50\vb -->
   <files>
-    <file src="*.dll" target="analyzers\dotnet\cs" exclude="**\Microsoft.CodeAnalysis.*;**\System.Collections.Immutable.*;**\System.Reflection.Metadata.*;**\System.Composition.*" />
+    <file src="SecurityCodeScan.dll" target="analyzers\dotnet" />
+    <file src="YamlDotNet.dll" target="analyzers\dotnet" />
     <file src="tools\*.ps1" target="tools\" />
   </files>
 </package>

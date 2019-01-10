@@ -2,11 +2,14 @@
 using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
+using System.Web;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SecurityCodeScan.Analyzers;
+using SecurityCodeScan.Analyzers.Taint;
+using SecurityCodeScan.Test.Config;
 using SecurityCodeScan.Test.Helpers;
 using DiagnosticVerifier = SecurityCodeScan.Test.Helpers.DiagnosticVerifier;
 
@@ -15,9 +18,15 @@ namespace SecurityCodeScan.Test
     [TestClass]
     public class XssPreventionAnalyzerTest : DiagnosticVerifier
     {
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new[] { new XssPreventionAnalyzer() };
+            return new DiagnosticAnalyzer[]
+            {
+                new TaintAnalyzerCSharp(),
+                new TaintAnalyzerVisualBasic(),
+                new XssPreventionAnalyzerCSharp(),
+                new XssPreventionAnalyzerVisualBasic()
+            };
         }
 
         private static readonly PortableExecutableReference[] References =
@@ -29,120 +38,257 @@ namespace SecurityCodeScan.Test
             MetadataReference.CreateFromFile(typeof(HtmlEncoder).Assembly.Location),
             MetadataReference.CreateFromFile(Assembly.Load("System.Runtime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a")
                                                      .Location),
+            MetadataReference.CreateFromFile(typeof(HttpResponse).Assembly.Location),
+            MetadataReference.CreateFromFile(typeof(Microsoft.EntityFrameworkCore.DbContext).Assembly.Location),
         };
 
         protected override IEnumerable<MetadataReference> GetAdditionalReferences() => References;
 
+        /// <summary> Potential XSS vulnerability </summary>
+        private DiagnosticResult Expected = new DiagnosticResult
+        {
+            Id       = "SCS0029",
+            Severity = DiagnosticSeverity.Warning
+        };
+
         #region Tests that are producing diagnostics
 
-        [TestMethod]
-        public async Task UnencodedInputDataSystemWebMvc()
+        [DataRow("Sink((from x in new SampleContext().TestProp where x == \"aaa\" select x).SingleOrDefault())", true)]
+        [DataRow("Sink((from x in new SampleContext().TestField where x == \"aaa\" select x).SingleOrDefault())", true)]
+        [DataTestMethod]
+        public async Task XssFromEntityFrameworkCore(string sink, bool warn)
         {
-            var cSharpTest = @"
-using System.Web.Mvc;
+            var cSharpTest = $@"
+using Microsoft.EntityFrameworkCore;
+using System.Linq;
 
-namespace VulnerableApp
-{
-    public class TestController : Controller
-    {
-        [HttpGet]
-        public string Get(int sensibleData)
-        {
-            return ""value "" + sensibleData;
+namespace sample
+{{
+    public class SampleContext : DbContext
+    {{
+        public DbSet<string> TestProp {{ get; set; }}
+        public DbSet<string> TestField;
+    }}
+
+    class MyFoo
+    {{
+        private void Sink(string s) {{}}
+
+        public void Run()
+        {{
+            {sink};
+        }}
+    }}
+}}
+";
+
+            sink = sink.CSharpReplaceToVBasic().Replace("==", "Is");
+
+            var visualBasicTest = $@"
+Imports Microsoft.EntityFrameworkCore
+Imports System.Linq
+
+Namespace sample
+    Public Class SampleContext
+        Inherits DbContext
+
+        Public Property TestProp As DbSet(Of String)
+        Public          TestField As DbSet(Of String)
+    End Class
+
+    Class MyFoo
+        Private Sub Sink(s As String)
+        End Sub
+
+        Public Sub Run()
+            {sink}
+        End Sub
+    End Class
+End Namespace
+";
+            var expected = new DiagnosticResult
+            {
+                Id       = "SCS0035",
+                Severity = DiagnosticSeverity.Warning,
+            };
+
+            var testConfig = @"
+Behavior:
+  MyKey:
+    Namespace: sample
+    ClassName: MyFoo
+    Name: Sink
+    Method:
+      InjectableArguments: [SCS0035: 0]
+
+  db3:
+    Namespace: Microsoft.EntityFrameworkCore
+    ClassName: DbSet
+    Method:
+      Returns:
+        Taint: Tainted
+";
+            var optionsWithProjectConfig = ConfigurationTest.CreateAnalyzersOptionsWithConfig(testConfig);
+
+            if (warn)
+            {
+                await VerifyCSharpDiagnostic(cSharpTest, expected, optionsWithProjectConfig).ConfigureAwait(false);
+                await VerifyVisualBasicDiagnostic(visualBasicTest, expected, optionsWithProjectConfig).ConfigureAwait(false);
+            }
+            else
+            {
+                await VerifyCSharpDiagnostic(cSharpTest, null, optionsWithProjectConfig).ConfigureAwait(false);
+                await VerifyVisualBasicDiagnostic(visualBasicTest, null, optionsWithProjectConfig).ConfigureAwait(false);
+            }
         }
-    }
-}
+
+        [TestCategory("Detect")]
+        [DataRow("System.Web", "Request.Params[0]",            "",              "Response.Write(userInput)")]
+        [DataRow("System.Web", "Request.Params[0]",            "System.String", "Response.Write(userInput)")]
+        [DataRow("System.Web", "Request.Params[0].ToString()", "System.String", "Response.Write(userInput)")]
+        //[DataRow("System.Web", "(System.Char[])Request.Params[0]", "Response.Write(userInput, x, y)")]
+        [DataTestMethod]
+        public async Task HttpResponseWrite(string @namespace, string inputType, string cast, string sink)
+        {
+            var csInput = string.IsNullOrEmpty(cast) ? inputType : $"({cast}){inputType}";
+            var cSharpTest = $@"
+using {@namespace};
+
+class Vulnerable
+{{
+    public static HttpResponse Response = null;
+    public static HttpRequest  Request  = null;
+
+    public static void Run()
+    {{
+        var userInput = {csInput};
+        {sink};
+    }}
+}}
             ";
 
-            var visualBasicTest = @"
-Imports System.Web.Mvc
+            inputType = inputType.CSharpReplaceToVBasic();
+            var vbInput = string.IsNullOrEmpty(cast) ? inputType : $"DirectCast({inputType}, {cast})";
+
+            var visualBasicTest = $@"
+Imports {@namespace}
+
+Class Vulnerable
+    Public Shared Response As HttpResponse
+    Public Shared Request  As HttpRequest
+
+    Public Shared Sub Run()
+        Dim userInput = {vbInput}
+        {sink}
+    End Sub
+End Class
+            ";
+
+            await VerifyCSharpDiagnostic(cSharpTest, Expected).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, Expected).ConfigureAwait(false);
+        }
+
+        [TestCategory("Detect")]
+        [DataTestMethod]
+        [DataRow("System.Web.Mvc",                       "HttpGet")]
+        [DataRow("HG = System.Web.Mvc.HttpGetAttribute", "HG")]
+        public async Task UnencodedInputDataSystemWebMvc(string alias, string attributeName)
+        {
+            string cSharpTest = $@"
+using {alias};
+
+namespace VulnerableApp
+{{
+    public class TestController : System.Web.Mvc.Controller
+    {{
+        [{attributeName}]
+        public string Get(int inputData)
+        {{
+            return ""value "" + inputData;
+        }}
+    }}
+}}
+            ";
+
+            string visualBasicTest = $@"
+Imports {alias}
 
 Namespace VulnerableApp
     Public Class TestController
-        Inherits Controller
-        <HttpGet> _
-        Public Function [Get](sensibleData As Integer) As String
-            Return ""value "" & sensibleData.ToString()
+        Inherits System.Web.Mvc.Controller
+        <{attributeName}> _
+        Public Function [Get](inputData As Integer) As String
+            Return ""value "" & inputData.ToString()
         End Function
     End Class
 End Namespace
             ";
 
-            var expected = new DiagnosticResult
-            {
-                Id       = "SCS0029",
-                Severity = DiagnosticSeverity.Warning
-            };
-
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest, Expected).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, Expected).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task UnencodedInputData()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 
 namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        public string Get(int sensibleData)
+        [HttpGet(""{inputData}"")]
+        public string Get(int inputData)
         {
-            return ""value "" + sensibleData;
+            return ""value "" + inputData;
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{sensibleData}"")> _
-        Public Function [Get](sensibleData As Integer) As String
-            Return ""value "" & sensibleData.ToString()
+        <HttpGet(""{inputData}"")> _
+        Public Function [Get](inputData As Integer) As String
+            Return ""value "" & inputData.ToString()
         End Function
     End Class
 End Namespace
             ";
 
-            var expected = new DiagnosticResult
-            {
-                Id       = "SCS0029",
-                Severity = DiagnosticSeverity.Warning
-            };
-
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest, Expected).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, Expected).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task UnencodedInputData2()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 
 namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
+        [HttpGet(""{inputData}"")]
         // using 'virtual' to make 'public' not the only modifier
         // using 'System.String' instead of 'string' to see if it is handled
-        public virtual System.String Get(int sensibleData)
+        public virtual System.String Get(int inputData)
         {
-            return ""value "" + sensibleData;
+            return ""value "" + inputData;
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
@@ -150,32 +296,27 @@ Namespace VulnerableApp
         Inherits Controller
         ' using Overridable to make Public not the only modifier
         ' using System.String instead of String to see if it is handled
-        <HttpGet(""{sensibleData}"")> _
-        Public Overridable Function [Get](sensibleData As Integer) As System.String
-            Return ""value "" & sensibleData.ToString()
+        <HttpGet(""{inputData}"")> _
+        Public Overridable Function [Get](inputData As Integer) As System.String
+            Return ""value "" & inputData.ToString()
         End Function
     End Class
 End Namespace
             ";
 
-            var expected = new DiagnosticResult
-            {
-                Id       = "SCS0029",
-                Severity = DiagnosticSeverity.Warning
-            };
-
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest, Expected).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, Expected).ConfigureAwait(false);
         }
 
         #endregion
 
         #region Tests that are not producing diagnostics
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task BaseNotController()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 
 namespace VulnerableApp
@@ -186,16 +327,16 @@ namespace VulnerableApp
 
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        public string Get(int sensibleData)
+        [HttpGet(""{inputData}"")]
+        public string Get(int inputData)
         {
-            return ""value "" + sensibleData;
+            return ""value "" + inputData;
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
@@ -204,9 +345,9 @@ Namespace VulnerableApp
 
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{sensibleData}"")> _
-        Public Function [Get](sensibleData As Integer) As String
-            Return ""value "" & sensibleData.ToString()
+        <HttpGet(""{inputData}"")> _
+        Public Function [Get](inputData As Integer) As String
+            Return ""value "" & inputData.ToString()
         End Function
     End Class
 End Namespace
@@ -216,32 +357,33 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task NoSymbolReturnType()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 
 namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        public xxx Get(int sensibleData)
+        [HttpGet(""{inputData}"")]
+        public xxx Get(int inputData)
         {
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{sensibleData}"")> _
-        Public Function [Get](sensibleData As Integer) As XXX
+        <HttpGet(""{inputData}"")> _
+        Public Function [Get](inputData As Integer) As XXX
         End Function
     End Class
 End Namespace
@@ -259,10 +401,11 @@ End Namespace
                                                         }).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task Void()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 
 namespace VulnerableApp
@@ -270,23 +413,23 @@ namespace VulnerableApp
     public class TestController : Controller
     {
         // see if 'void' is handled
-        [HttpGet(""{sensibleData}"")]
-        public void Get(int sensibleData)
+        [HttpGet(""{inputData}"")]
+        public void Get(int inputData)
         {
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
         ' see if Void is handled
-        <HttpGet(""{sensibleData}"")> _
-        Public Function [Get](sensibleData As Integer)
+        <HttpGet(""{inputData}"")> _
+        Public Function [Get](inputData As Integer)
         End Function
     End Class
 End Namespace
@@ -296,10 +439,11 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest, new DiagnosticResult { Id = "BC42105" }).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
-        public async Task EncodedSensibleDataWithTemporaryVariable()
+        public async Task EncodedInputDataWithTemporaryVariable()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Encodings.Web;
 
@@ -307,26 +451,26 @@ namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        public string Get(string sensibleData)
+        [HttpGet(""{inputData}"")]
+        public string Get(string inputData)
         {
-            string temporary_variable = HtmlEncoder.Default.Encode(sensibleData);
+            string temporary_variable = HtmlEncoder.Default.Encode(inputData);
             return ""value "" + temporary_variable;
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 Imports System.Text.Encodings.Web
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{ sensibleData}"")> _
-        Public Function [Get](sensibleData As String) As String
-            Dim temporary_variable As String = HtmlEncoder.[Default].Encode(sensibleData)
+        <HttpGet(""{ inputData}"")> _
+        Public Function [Get](inputData As String) As String
+            Dim temporary_variable As String = HtmlEncoder.[Default].Encode(inputData)
             Return ""value "" & temporary_variable
         End Function
     End Class
@@ -337,10 +481,11 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
-        public async Task EncodedSensibleDataOnReturn()
+        public async Task EncodedInputDataOnReturn()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Encodings.Web;
 
@@ -348,25 +493,25 @@ namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        public string Get(string sensibleData)
+        [HttpGet(""{inputData}"")]
+        public string Get(string inputData)
         {
-            return ""value "" + HtmlEncoder.Default.Encode(sensibleData);
+            return ""value "" + HtmlEncoder.Default.Encode(inputData);
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports System.Text.Encodings.Web
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{ sensibleData}"")> _
-        Public Function [Get](sensibleData As String) As String
-            Return ""value "" & HtmlEncoder.[Default].Encode(sensibleData)
+        <HttpGet(""{ inputData}"")> _
+        Public Function [Get](inputData As String) As String
+            Return ""value "" & HtmlEncoder.[Default].Encode(inputData)
         End Function
     End Class
 End Namespace
@@ -376,10 +521,11 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task ReturnEncodedData()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Encodings.Web;
 
@@ -387,25 +533,25 @@ namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        public string Get(string sensibleData)
+        [HttpGet(""{inputData}"")]
+        public string Get(string inputData)
         {
-            return HtmlEncoder.Default.Encode(""value "" + sensibleData);
+            return HtmlEncoder.Default.Encode(""value "" + inputData);
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports System.Text.Encodings.Web
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{ sensibleData}"")> _
-        Public Function [Get](sensibleData As String) As String
-            Return HtmlEncoder.[Default].Encode(""value "" & sensibleData)
+        <HttpGet(""{ inputData}"")> _
+        Public Function [Get](inputData As String) As String
+            Return HtmlEncoder.[Default].Encode(""value "" & inputData)
         End Function
     End Class
 End Namespace
@@ -415,10 +561,11 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task EncodedDataWithSameVariableUsage()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Encodings.Web;
 
@@ -426,27 +573,27 @@ namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        public string Get(string sensibleData)
+        [HttpGet(""{inputData}"")]
+        public string Get(string inputData)
         {
-            sensibleData = HtmlEncoder.Default.Encode(""value "" + sensibleData);
-            return ""value "" + HtmlEncoder.Default.Encode(sensibleData);
+            inputData = HtmlEncoder.Default.Encode(""value "" + inputData);
+            return ""value "" + HtmlEncoder.Default.Encode(inputData);
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports System.Text.Encodings.Web
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{ sensibleData}"")> _
-        Public Function [Get](sensibleData As String) As String
-            sensibleData = HtmlEncoder.[Default].Encode(""value "" & sensibleData)
-            Return ""value "" & HtmlEncoder.[Default].Encode(sensibleData)
+        <HttpGet(""{ inputData}"")> _
+        Public Function [Get](inputData As String) As String
+            inputData = HtmlEncoder.[Default].Encode(""value "" & inputData)
+            Return ""value "" & HtmlEncoder.[Default].Encode(inputData)
         End Function
     End Class
 End Namespace
@@ -456,10 +603,11 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task MethodWithOtherReturningTypeThanString()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 
@@ -477,7 +625,7 @@ namespace VulnerableApp
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 Imports Microsoft.AspNetCore.Authorization
 
@@ -497,34 +645,35 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [TestMethod]
         public async Task PrivateMethod()
         {
-            var cSharpTest = @"
+            const string cSharpTest = @"
 using Microsoft.AspNetCore.Mvc;
 
 namespace VulnerableApp
 {
     public class TestController : Controller
     {
-        [HttpGet(""{sensibleData}"")]
-        private string Get(int sensibleData)
+        [HttpGet(""{inputData}"")]
+        private string Get(int inputData)
         {
-            return ""value "" + sensibleData;
+            return ""value "" + inputData;
         }
     }
 }
             ";
 
-            var visualBasicTest = @"
+            const string visualBasicTest = @"
 Imports Microsoft.AspNetCore.Mvc
 
 Namespace VulnerableApp
     Public Class TestController
         Inherits Controller
-        <HttpGet(""{sensibleData}"")> _
-        Private Function[Get](sensibleData As Integer) As String
-            Return ""value "" + sensibleData
+        <HttpGet(""{inputData}"")> _
+        Private Function[Get](inputData As Integer) As String
+            Return ""value "" + inputData
         End Function
     End Class
 End Namespace

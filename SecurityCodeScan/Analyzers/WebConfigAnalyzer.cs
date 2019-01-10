@@ -15,12 +15,16 @@ namespace SecurityCodeScan.Analyzers
     public class WebConfigAnalyzer : DiagnosticAnalyzer, IExternalFileAnalyzer
     {
         public static readonly DiagnosticDescriptor RuleValidateRequest         = LocaleUtil.GetDescriptor("SCS0021");
+        public static readonly DiagnosticDescriptor RuleRequestValidationMode   = LocaleUtil.GetDescriptor("SCS0030");
         public static readonly DiagnosticDescriptor RuleEnableEventValidation   = LocaleUtil.GetDescriptor("SCS0022");
         public static readonly DiagnosticDescriptor RuleViewStateEncryptionMode = LocaleUtil.GetDescriptor("SCS0023");
         public static readonly DiagnosticDescriptor RuleEnableViewStateMac      = LocaleUtil.GetDescriptor("SCS0024");
 
-        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
-            RuleValidateRequest, RuleEnableEventValidation, RuleViewStateEncryptionMode, RuleEnableViewStateMac);
+        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(RuleValidateRequest,
+                                                                                                           RuleRequestValidationMode,
+                                                                                                           RuleEnableEventValidation,
+                                                                                                           RuleViewStateEncryptionMode,
+                                                                                                           RuleEnableViewStateMac);
 
         public override void Initialize(AnalysisContext context)
         {
@@ -156,7 +160,7 @@ namespace SecurityCodeScan.Analyzers
 
                                             return version >= 4.0M;
                                         },
-                                        RuleValidateRequest,
+                                        RuleRequestValidationMode,
                                         systemWeb,
                                         lastFoundElement,
                                         "httpRuntime",

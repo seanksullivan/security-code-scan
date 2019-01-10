@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SecurityCodeScan.Analyzers;
 using SecurityCodeScan.Analyzers.Taint;
+using SecurityCodeScan.Test.Audit;
 using SecurityCodeScan.Test.Helpers;
 using DiagnosticVerifier = SecurityCodeScan.Test.Helpers.DiagnosticVerifier;
 
@@ -13,18 +14,19 @@ namespace SecurityCodeScan.Test.Password
     [TestClass]
     public class HardcodedPasswordFieldTest : DiagnosticVerifier
     {
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new DiagnosticAnalyzer[] { new TaintAnalyzer(), new UnknownPasswordApiAnalyzer() };
+            return new DiagnosticAnalyzer[] { new TaintAnalyzerCSharp(), new TaintAnalyzerVisualBasic(), new UnknownPasswordApiAnalyzerCSharp(), new UnknownPasswordApiAnalyzerVisualBasic() };
         }
 
+        [TestCategory("Safe")]
         [DataRow("null")]
         [DataRow("String.Empty")]
         [DataRow("\"\"")]
         [DataTestMethod]
         public async Task HardCodePasswordFalsePositive(string value)
         {
-            var vbValue = value.Replace("null", "Nothing");
+            var vbValue = value.CSharpReplaceToVBasic();
 
             var cSharpTest = $@"
 using System;
@@ -89,6 +91,7 @@ End Namespace
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task HardCodePasswordAssignment()
         {
@@ -127,10 +130,11 @@ End Namespace
                 Severity = DiagnosticSeverity.Warning
             };
 
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest, expected, await AuditTest.GetAuditModeConfigOptions().ConfigureAwait(false)).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, expected, await AuditTest.GetAuditModeConfigOptions().ConfigureAwait(false)).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [TestMethod]
         public async Task HardCodePasswordInitializer()
         {
@@ -167,8 +171,8 @@ End Namespace
                 Severity = DiagnosticSeverity.Warning
             };
 
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest, expected, await AuditTest.GetAuditModeConfigOptions().ConfigureAwait(false)).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, expected, await AuditTest.GetAuditModeConfigOptions().ConfigureAwait(false)).ConfigureAwait(false);
         }
     }
 }

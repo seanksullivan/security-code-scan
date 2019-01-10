@@ -37,16 +37,25 @@ namespace SecurityCodeScan.Analyzers.Utils
                 return null;
             }
 
-            SyntaxKind kind = node.Kind();
-            switch (kind)
+            var kind = node.Kind();
+            if (kind == SyntaxKind.VariableDeclarator)
+                return (VariableDeclaratorSyntax)node;
+
+            return (node as AssignmentExpressionSyntax)?.Left;
+        }
+
+        public override string GetAssignmentLeftNodeName(SyntaxNode node)
+        {
+            if (node == null)
             {
-                case SyntaxKind.SimpleAssignmentExpression:
-                    return ((AssignmentExpressionSyntax)node).Left;
-                case SyntaxKind.VariableDeclarator:
-                    return (VariableDeclaratorSyntax)node;
+                return null;
             }
 
-            return null;
+            var kind = node.Kind();
+            if (kind == SyntaxKind.VariableDeclarator)
+                return ((VariableDeclaratorSyntax)node).Identifier.Text;
+
+            return (node as AssignmentExpressionSyntax)?.Left.ToString();
         }
 
         public override SyntaxNode GetAssignmentRightNode(SyntaxNode node)
@@ -59,6 +68,7 @@ namespace SecurityCodeScan.Analyzers.Utils
             SyntaxKind kind = node.Kind();
             switch (kind)
             {
+                case SyntaxKind.AddAssignmentExpression:
                 case SyntaxKind.SimpleAssignmentExpression:
                     return ((AssignmentExpressionSyntax)node).Right;
                 case SyntaxKind.VariableDeclarator:
@@ -69,6 +79,16 @@ namespace SecurityCodeScan.Analyzers.Utils
                     }
 
                     break;
+            }
+
+            return null;
+        }
+
+        public override SyntaxNode GetMemberAccessNameNode(SyntaxNode node)
+        {
+            if (node?.Kind() == SyntaxKind.SimpleMemberAccessExpression)
+            {
+                return ((MemberAccessExpressionSyntax)node)?.Name;
             }
 
             return null;
@@ -106,24 +126,6 @@ namespace SecurityCodeScan.Analyzers.Utils
             return ((InvocationExpressionSyntax)node).Expression;
         }
 
-        public override SyntaxNode GetCallTargetNode(SyntaxNode node)
-        {
-            if (node == null)
-                return null;
-
-            SyntaxKind kind = node.Kind();
-            switch (kind)
-            {
-                case SyntaxKind.InvocationExpression:
-                    ExpressionSyntax callExpr = ((InvocationExpressionSyntax)node).Expression;
-                    return GetNameNode(callExpr) ?? callExpr;
-                case SyntaxKind.ObjectCreationExpression:
-                    return ((ObjectCreationExpressionSyntax)node).Type;
-            }
-
-            return null;
-        }
-
         public override SyntaxNode GetDefaultValueForAnOptionalParameter(SyntaxNode declNode, int paramIndex)
         {
             if (!(declNode is BaseMethodDeclarationSyntax methodDecl))
@@ -141,30 +143,12 @@ namespace SecurityCodeScan.Analyzers.Utils
             return null;
         }
 
-        public override SyntaxNode GetAttributeArgumentExpresionNode(SyntaxNode node)
+        public override SyntaxNode GetAttributeArgumentExpressionNode(SyntaxNode node)
         {
             if (!(node is AttributeArgumentSyntax argument))
                 return null;
 
             return argument.Expression;
-        }
-
-        public override SyntaxNode GetNameNode(SyntaxNode node)
-        {
-            switch (node.Kind())
-            {
-                case SyntaxKind.AttributeArgument:
-                    return ((AttributeArgumentSyntax)node).NameEquals?.Name;
-                case SyntaxKind.Attribute:
-                    return ((AttributeSyntax)node).Name;
-                case SyntaxKind.SimpleMemberAccessExpression:
-                    return ((MemberAccessExpressionSyntax)node).Name;
-                case SyntaxKind.ObjectCreationExpression:
-                    return ((ObjectCreationExpressionSyntax)node).Type;
-                default:
-                    return null;
-
-            }
         }
 
         protected override IEnumerable<SyntaxNode> GetCallArgumentExpressionNodes(SyntaxNode node, CallKind callKind)
@@ -228,6 +212,18 @@ namespace SecurityCodeScan.Analyzers.Utils
             }
             SyntaxKind kind = node.Kind();
             return kind == SyntaxKind.InvocationExpression || kind == SyntaxKind.ObjectCreationExpression;
+        }
+
+        public override bool IsSimpleMemberAccessExpressionNode(SyntaxNode node)
+        {
+            SyntaxKind? kind = node?.Kind();
+            return kind == SyntaxKind.SimpleMemberAccessExpression;
+        }
+
+        public override bool IsObjectCreationExpressionNode(SyntaxNode node)
+        {
+            SyntaxKind? kind = node?.Kind();
+            return kind == SyntaxKind.ObjectCreationExpression;
         }
 
         public override IMethodSymbol GetCalleeMethodSymbol(SyntaxNode node, SemanticModel semanticModel)
@@ -370,6 +366,16 @@ namespace SecurityCodeScan.Analyzers.Utils
             }
 
             return node.Parent?.Kind() != SyntaxKind.EqualsValueClause;
+        }
+
+        public override bool IsAttributeArgument(SyntaxNode node)
+        {
+            return node?.Kind() == SyntaxKind.AttributeArgument;
+        }
+
+        public override SyntaxNode GetAttributeArgumentNode(SyntaxNode node)
+        {
+            return ((AttributeArgumentSyntax)node)?.NameEquals?.Name;
         }
     }
 }

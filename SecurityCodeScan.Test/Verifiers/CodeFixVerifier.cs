@@ -59,7 +59,7 @@ namespace SecurityCodeScan.Test.Helpers
             //Console.WriteLine(normalizeNew);
             //Console.WriteLine("== New source (END) ==");
 
-            var a = GetDiagnosticAnalyzers().ToList();
+            var a = GetDiagnosticAnalyzers(LanguageNames.CSharp).ToList();
             a.Add(new DebugAnalyzer());
 
             await VerifyFix(LanguageNames.CSharp,
@@ -101,6 +101,7 @@ namespace SecurityCodeScan.Test.Helpers
         {
             var document            = CreateDocument(oldSource, dotNetVersion, language, GetAdditionalReferences());
             var analyzerDiagnostics = await GetSortedDiagnosticsFromDocuments(analyzers,
+                                                                              null,
                                                                               new[] { document },
                                                                               cancellationToken).ConfigureAwait(false);
             var compilerDiagnostics = await GetCompilerDiagnostics(document, cancellationToken).ConfigureAwait(false);
@@ -132,6 +133,7 @@ namespace SecurityCodeScan.Test.Helpers
 
                 document            = await ApplyFix(document, actions.ElementAt(0), cancellationToken).ConfigureAwait(false);
                 analyzerDiagnostics = await GetSortedDiagnosticsFromDocuments(analyzers,
+                                                                              null,
                                                                               new[] { document },
                                                                               cancellationToken).ConfigureAwait(false);
 

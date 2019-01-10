@@ -1,104 +1,76 @@
-﻿using System.Collections.Generic;
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
-using Microsoft.CodeAnalysis.VisualBasic;
 using SecurityCodeScan.Analyzers.Locale;
-using SecurityCodeScan.Analyzers.Taint;
 using SecurityCodeScan.Analyzers.Utils;
-using CSharpSyntax = Microsoft.CodeAnalysis.CSharp.Syntax;
-using SyntaxKind = Microsoft.CodeAnalysis.CSharp.SyntaxKind;
+using SecurityCodeScan.Config;
+using CSharp = Microsoft.CodeAnalysis.CSharp;
+using VB = Microsoft.CodeAnalysis.VisualBasic;
 
 namespace SecurityCodeScan.Analyzers
 {
-    [DiagnosticAnalyzer(LanguageNames.CSharp, LanguageNames.VisualBasic)]
-    public class UnknownPasswordApiAnalyzer : TaintAnalyzerExtension
+    [DiagnosticAnalyzer(LanguageNames.CSharp)]
+    public class UnknownPasswordApiAnalyzerCSharp : UnknownPasswordApiAnalyzer
     {
-        private static readonly DiagnosticDescriptor                 Rule = LocaleUtil.GetDescriptor("SCS0015", "title_assignment");
-        public override         ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(Rule);
-
-        private readonly List<string> PasswordKeywords = new List<string> // todo: move out to config
-        {
-            "password",
-            "motdepasse",
-            "heslo",
-            "adgangskode",
-            "wachtwoord",
-            "salasana",
-            "passwort",
-            "passord",
-            "senha",
-            "geslo",
-            "clave",
-            "losenord",
-            "parola",
-            "secretkey",
-            "pwd"
-        };
-
         public override void Initialize(AnalysisContext context)
         {
-            TaintAnalyzer.RegisterExtension(this);
+            context.RegisterSyntaxNodeAction(ctx => VisitAssignment(ctx, CSharpSyntaxNodeHelper.Default), CSharp.SyntaxKind.VariableDeclarator);
+            context.RegisterSyntaxNodeAction(ctx => VisitAssignment(ctx, CSharpSyntaxNodeHelper.Default), CSharp.SyntaxKind.SimpleAssignmentExpression);
         }
+    }
 
-        public override void VisitAssignment(CSharpSyntax.AssignmentExpressionSyntax node,
-                                             ExecutionState                          state,
-                                             MethodBehavior                          behavior,
-                                             ISymbol                                 symbol,
-                                             VariableState                           variableRightState)
+    [DiagnosticAnalyzer(LanguageNames.VisualBasic)]
+    public class UnknownPasswordApiAnalyzerVisualBasic : UnknownPasswordApiAnalyzer
+    {
+        public override void Initialize(AnalysisContext context)
         {
-            if (behavior                                                                     != null                               || //Unknown API
-                symbol                                                                       == null                               ||
-                variableRightState.Taint                                                     != VariableTaint.Constant             ||
-                Microsoft.CodeAnalysis.CSharp.CSharpExtensions.Kind(variableRightState.Node) != SyntaxKind.StringLiteralExpression ||
-                !IsPasswordField(symbol))
+            context.RegisterSyntaxNodeAction(ctx => VisitAssignment(ctx, VBSyntaxNodeHelper.Default), VB.SyntaxKind.VariableDeclarator);
+            context.RegisterSyntaxNodeAction(ctx => VisitAssignment(ctx, VBSyntaxNodeHelper.Default), VB.SyntaxKind.SimpleAssignmentStatement);
+            context.RegisterSyntaxNodeAction(ctx => VisitAssignment(ctx, VBSyntaxNodeHelper.Default), VB.SyntaxKind.NamedFieldInitializer);
+        }
+    }
+
+    public abstract class UnknownPasswordApiAnalyzer : DiagnosticAnalyzer
+    {
+        public static readonly DiagnosticDescriptor Rule = LocaleUtil.GetDescriptor("SCS0015", "title_assignment");
+        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
+
+        private bool IsPasswordField(string name, ImmutableArray<AdditionalText> additionalTexts)
+        {
+            var passwordFields = ConfigurationManager.Instance.GetProjectConfiguration(additionalTexts).PasswordFields;
+            foreach (var passwordField in passwordFields)
             {
-                return;
+                if (CultureInfo.InvariantCulture.CompareInfo.IndexOf(name, passwordField, CompareOptions.IgnoreCase) >= 0)
+                    return true;
             }
 
-            var constValue = state.AnalysisContext.SemanticModel.GetConstantValue(variableRightState.Node);
-            if (constValue.HasValue && constValue.Value.Equals(""))
-                return;
-
-            var varSymbol = state.GetSymbol(variableRightState.Node);
-            if (varSymbol != null && varSymbol.IsType("System.String.Empty"))
-                return;
-
-            var diagnostic = Diagnostic.Create(Rule, node.GetLocation());
-            state.AnalysisContext.ReportDiagnostic(diagnostic);
+            return false;
         }
 
-        public override void VisitAssignment(VisualBasicSyntaxNode node,
-                                             ExecutionState        state,
-                                             MethodBehavior        behavior,
-                                             ISymbol               symbol,
-                                             VariableState         variableRightState)
+        protected void VisitAssignment(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
         {
-            if (behavior                 != null                   || //Unknown API
-                symbol                   == null                   ||
-                variableRightState.Taint != VariableTaint.Constant ||
-                Microsoft.CodeAnalysis.VisualBasic.VisualBasicExtensions.Kind(variableRightState.Node) !=
-                    Microsoft.CodeAnalysis.VisualBasic.SyntaxKind.StringLiteralExpression ||
-                !IsPasswordField(symbol))
-            {
-                return;
-            }
-
-            var constValue = state.AnalysisContext.SemanticModel.GetConstantValue(variableRightState.Node);
-            if (constValue.HasValue && constValue.Value.Equals(""))
+            // todo: if PasswordField is reintroduced to Behaviors need to filter warnings covered by taint analyzer
+            var leftNode = nodeHelper.GetAssignmentLeftNodeName(ctx.Node);
+            if (!IsPasswordField(leftNode, ctx.Options.AdditionalFiles))
                 return;
 
-            var varSymbol = state.GetSymbol(variableRightState.Node);
-            if (varSymbol != null && varSymbol.IsType("System.String.Empty"))
+            var rightNode = nodeHelper.GetAssignmentRightNode(ctx.Node);
+            if (rightNode == null)
                 return;
 
-            var diagnostic = Diagnostic.Create(Rule, node.GetLocation());
-            state.AnalysisContext.ReportDiagnostic(diagnostic);
-        }
+            var constValue = ctx.SemanticModel.GetConstantValue(rightNode);
+            if (!constValue.HasValue)
+                return;
 
-        private bool IsPasswordField(ISymbol symbol)
-        {
-            return PasswordKeywords.Contains(symbol.MetadataName.ToLower());
+            if (!(constValue.Value is string value))
+                return;
+
+            if (value.Equals(string.Empty))
+                return;
+
+            var diagnostic = Diagnostic.Create(Rule, ctx.Node.GetLocation());
+            ctx.ReportDiagnostic(diagnostic);
         }
     }
 }

@@ -1,5 +1,4 @@
 ﻿using System;
-using System.IO;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -15,6 +14,7 @@ namespace SecurityCodeScan.Test
         {
         }
 
+        [TestCategory("Detect")]
         [DataRow("<pages validateRequest=\"false\"></pages>", "<pages validateRequest=\"false\">")]
         [DataRow("<pages validateRequest=\" False \"></pages>", "<pages validateRequest=\" False \">")]
         [DataRow("<pages validateRequest=\"false\" />",       "<pages validateRequest=\"false\" />")]
@@ -22,7 +22,7 @@ namespace SecurityCodeScan.Test
         [DataTestMethod]
         public async Task ValidateRequestVulnerable(string element, string expectedNode)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <system.web>
         {element}
@@ -30,7 +30,7 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var path = Path.GetTempFileName();
+            var path = Guid.NewGuid().ToString();
             var expected = new
             {
                 Id      = WebConfigAnalyzer.RuleValidateRequest.Id,
@@ -45,13 +45,14 @@ namespace SecurityCodeScan.Test
                                                                    && d.GetMessage(null) == expected.Message)));
         }
 
+        [TestCategory("Safe")]
         [DataRow("<pages validateRequest=\"true\"></pages>")]
         [DataRow("<pages validateRequest=\" True \"></pages>")]
         [DataRow("<pages></pages>")]
         [TestMethod]
         public async Task ValidateRequestSafe(string element)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <not>
         <pages validateRequest=""false""></pages>
@@ -62,10 +63,11 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var diagnostics = await Analyze(config, Path.GetTempFileName()).ConfigureAwait(false);
+            var diagnostics = await Analyze(config, Guid.NewGuid().ToString()).ConfigureAwait(false);
             diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleValidateRequest.Id)), Times.Never);
         }
 
+        [TestCategory("Detect")]
         [DataRow("<httpRuntime requestValidationMode=\"2.0\"></httpRuntime>", "<httpRuntime requestValidationMode=\"2.0\">")]
         [DataRow("<httpRuntime requestValidationMode=\" 2.0\" />",             "<httpRuntime requestValidationMode=\" 2.0\" />")]
         [DataRow("<httpRuntime requestValidationMode=\" 3.0\"></httpRuntime>", "<httpRuntime requestValidationMode=\" 3.0\">")]
@@ -75,7 +77,7 @@ namespace SecurityCodeScan.Test
         [DataTestMethod]
         public async Task RequestValidationModeVulnerable(string element, string expectedNode)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <system.web>
         {element}
@@ -83,11 +85,11 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var path     = Path.GetTempFileName();
+            var path     = Guid.NewGuid().ToString();
             var expected = new
             {
-                Id      = WebConfigAnalyzer.RuleValidateRequest.Id,
-                Message = String.Format(WebConfigAnalyzer.RuleValidateRequest.MessageFormat.ToString(),
+                Id      = WebConfigAnalyzer.RuleRequestValidationMode.Id,
+                Message = String.Format(WebConfigAnalyzer.RuleRequestValidationMode.MessageFormat.ToString(),
                                         path,
                                         4,
                                         expectedNode)
@@ -98,13 +100,14 @@ namespace SecurityCodeScan.Test
                                                                    && d.GetMessage(null) == expected.Message)));
         }
 
+        [TestCategory("Safe")]
         [DataRow("<httpRuntime requestValidationMode=\"4.0\"></httpRuntime>")]
         [DataRow("<httpRuntime requestValidationMode=\"4.5\"></httpRuntime>")]
         [DataRow("<httpRuntime></httpRuntime>")]
         [TestMethod]
         public async Task RequestValidationModeSafe(string element)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <not>
         <httpRuntime requestValidationMode=""false""></httpRuntime>
@@ -115,10 +118,11 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var diagnostics = await Analyze(config, Path.GetTempFileName()).ConfigureAwait(false);
-            diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleValidateRequest.Id)), Times.Never);
+            var diagnostics = await Analyze(config, Guid.NewGuid().ToString()).ConfigureAwait(false);
+            diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleRequestValidationMode.Id)), Times.Never);
         }
 
+        [TestCategory("Detect")]
         [DataRow("<httpRuntime requestValidationMode=\"2.0\"></httpRuntime>", "<httpRuntime requestValidationMode=\"2.0\">")]
         [DataRow("<httpRuntime requestValidationMode=\" 2.0\" />", "<httpRuntime requestValidationMode=\" 2.0\" />")]
         [DataRow("<httpRuntime requestValidationMode=\" 3.0\"></httpRuntime>", "<httpRuntime requestValidationMode=\" 3.0\">")]
@@ -128,7 +132,7 @@ namespace SecurityCodeScan.Test
         [DataTestMethod]
         public async Task RequestValidationModeLocationVulnerable(string element, string expectedNode)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <location path=""about"">
         <system.web>
@@ -143,19 +147,19 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var path = Path.GetTempFileName();
+            var path = Guid.NewGuid().ToString();
             var expected = new
             {
-                Id = WebConfigAnalyzer.RuleValidateRequest.Id,
-                Message = String.Format(WebConfigAnalyzer.RuleValidateRequest.MessageFormat.ToString(),
+                Id = WebConfigAnalyzer.RuleRequestValidationMode.Id,
+                Message = String.Format(WebConfigAnalyzer.RuleRequestValidationMode.MessageFormat.ToString(),
                                         path,
                                         5,
                                         expectedNode)
             };
             var expected2 = new
             {
-                Id      = WebConfigAnalyzer.RuleValidateRequest.Id,
-                Message = String.Format(WebConfigAnalyzer.RuleValidateRequest.MessageFormat.ToString(),
+                Id      = WebConfigAnalyzer.RuleRequestValidationMode.Id,
+                Message = String.Format(WebConfigAnalyzer.RuleRequestValidationMode.MessageFormat.ToString(),
                                         path,
                                         10,
                                         expectedNode)
@@ -169,13 +173,14 @@ namespace SecurityCodeScan.Test
                                                                    && d.GetMessage(null) == expected2.Message)), Times.Once);
         }
 
+        [TestCategory("Safe")]
         [DataRow("<httpRuntime requestValidationMode=\"4.0\"></httpRuntime>")]
         [DataRow("<httpRuntime requestValidationMode=\"4.5\"></httpRuntime>")]
         [DataRow("<httpRuntime></httpRuntime>")]
         [TestMethod]
         public async Task RequestValidationModeLocationSafe(string element)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <not>
         <httpRuntime requestValidationMode=""false""></httpRuntime>
@@ -188,10 +193,11 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var diagnostics = await Analyze(config, Path.GetTempFileName()).ConfigureAwait(false);
-            diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleValidateRequest.Id)), Times.Never);
+            var diagnostics = await Analyze(config, Guid.NewGuid().ToString()).ConfigureAwait(false);
+            diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleRequestValidationMode.Id)), Times.Never);
         }
 
+        [TestCategory("Detect")]
         [DataRow("<pages enableEventValidation=\"false\"></pages>", "<pages enableEventValidation=\"false\">")]
         [DataRow("<pages enableEventValidation=\" False \"></pages>", "<pages enableEventValidation=\" False \">")]
         [DataRow("<pages enableEventValidation=\"false\" />",       "<pages enableEventValidation=\"false\" />")]
@@ -199,7 +205,7 @@ namespace SecurityCodeScan.Test
         [DataTestMethod]
         public async Task EnableEventValidationVulnerable(string element, string expectedNode)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <system.web>
         {element}
@@ -207,7 +213,7 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var path = Path.GetTempFileName();
+            var path = Guid.NewGuid().ToString();
             var expected = new
             {
                 Id = WebConfigAnalyzer.RuleEnableEventValidation.Id,
@@ -223,13 +229,14 @@ namespace SecurityCodeScan.Test
                                                                    && d.GetMessage(null) == expected.Message)), Times.Once);
         }
 
+        [TestCategory("Safe")]
         [DataRow("<pages enableEventValidation=\"true\"></pages>")]
         [DataRow("<pages enableEventValidation=\" True \"></pages>")]
         [DataRow("<pages></pages>")]
         [TestMethod]
         public async Task EnableEventValidationSafe(string element)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <not>
         <pages enableEventValidation=""false""></pages>
@@ -240,10 +247,11 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var diagnostics = await Analyze(config, Path.GetTempFileName()).ConfigureAwait(false);
+            var diagnostics = await Analyze(config, Guid.NewGuid().ToString()).ConfigureAwait(false);
             diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleEnableEventValidation.Id)), Times.Never);
         }
 
+        [TestCategory("Detect")]
         [DataRow("<pages viewStateEncryptionMode=\"Auto\"></pages>", "<pages viewStateEncryptionMode=\"Auto\"></pages>",
             "<pages viewStateEncryptionMode=\"Auto\">", 9)]
         [DataRow("<pages viewStateEncryptionMode=\" auto \"></pages>", "<pages viewStateEncryptionMode=\" auto \"></pages>",
@@ -268,7 +276,7 @@ namespace SecurityCodeScan.Test
         [DataTestMethod]
         public async Task ViewStateEncryptionModeVulnerable(string mainElement, string locationElement, string expectedNode, int line)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <location path=""about"">
         <system.web>
@@ -281,7 +289,7 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var path = Path.GetTempFileName();
+            var path = Guid.NewGuid().ToString();
             var expected = new
             {
                 Id = WebConfigAnalyzer.RuleViewStateEncryptionMode.Id,
@@ -297,12 +305,13 @@ namespace SecurityCodeScan.Test
                                                                    && d.GetMessage(null) == expected.Message)), Times.Once);
         }
 
+        [TestCategory("Safe")]
         [DataRow("<pages viewStateEncryptionMode=\"Always\"></pages>")]
         [DataRow("<pages viewStateEncryptionMode=\"always\"></pages>")]
         [TestMethod]
         public async Task ViewStateEncryptionModeSafe(string element)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <not>
         <pages viewStateEncryptionMode=""Never""></pages>
@@ -313,10 +322,11 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var diagnostics = await Analyze(config, Path.GetTempFileName()).ConfigureAwait(false);
+            var diagnostics = await Analyze(config, Guid.NewGuid().ToString()).ConfigureAwait(false);
             diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleViewStateEncryptionMode.Id)), Times.Never);
         }
 
+        [TestCategory("Detect")]
         [DataRow("<pages enableViewStateMac=\"false\"></pages>", "<pages enableViewStateMac=\"false\">")]
         [DataRow("<pages enableViewStateMac=\" False \"></pages>", "<pages enableViewStateMac=\" False \">")]
         [DataRow("<pages enableViewStateMac=\"false\" />",       "<pages enableViewStateMac=\"false\" />")]
@@ -324,7 +334,7 @@ namespace SecurityCodeScan.Test
         [DataTestMethod]
         public async Task EnableViewStateMacVulnerable(string element, string expectedNode)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <system.web>
         {element}
@@ -332,7 +342,7 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var path = Path.GetTempFileName();
+            var path = Guid.NewGuid().ToString();
             var expected = new
             {
                 Id = WebConfigAnalyzer.RuleEnableViewStateMac.Id,
@@ -348,13 +358,14 @@ namespace SecurityCodeScan.Test
                                                                    && d.GetMessage(null) == expected.Message)), Times.Once);
         }
 
+        [TestCategory("Safe")]
         [DataRow("<pages enableViewStateMac=\"true\"></pages>")]
         [DataRow("<pages enableViewStateMac=\" True \"></pages>")]
         [DataRow("<pages></pages>")]
         [TestMethod]
         public async Task EnableViewStateMacSafe(string element)
         {
-            string config = $@"
+            var config = $@"
 <configuration>
     <not>
         <pages enableViewStateMac=""false""></pages>
@@ -365,7 +376,7 @@ namespace SecurityCodeScan.Test
 </configuration>
 ";
 
-            var diagnostics = await Analyze(config, Path.GetTempFileName()).ConfigureAwait(false);
+            var diagnostics = await Analyze(config, Guid.NewGuid().ToString()).ConfigureAwait(false);
             diagnostics.Verify(call => call(It.Is<Diagnostic>(d => d.Id == WebConfigAnalyzer.RuleEnableViewStateMac.Id)), Times.Never);
         }
     }

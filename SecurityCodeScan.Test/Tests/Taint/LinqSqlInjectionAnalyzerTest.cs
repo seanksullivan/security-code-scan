@@ -13,198 +13,60 @@ namespace SecurityCodeScan.Test.Taint
     [TestClass]
     public class LinqSqlInjectionAnalyzerTest : DiagnosticVerifier
     {
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new[] { new TaintAnalyzer() };
+            return new DiagnosticAnalyzer[] { new TaintAnalyzerCSharp(), new TaintAnalyzerVisualBasic(), };
         }
 
         private static readonly PortableExecutableReference[] References =
         {
-            MetadataReference.CreateFromFile(typeof(DataContext).Assembly.Location)
+            MetadataReference.CreateFromFile(typeof(DataContext).Assembly.Location),
+            MetadataReference.CreateFromFile(typeof(System.Web.Mvc.Controller).Assembly.Location)
         };
 
         protected override IEnumerable<MetadataReference> GetAdditionalReferences() => References;
 
-        [TestMethod]
-        public async Task LinqInjectionFalsePositiveWithGeneric()
+        [DataRow("ctx.ExecuteQuery<Object>(input)",              true)]
+        [DataRow("ctx.ExecuteQuery<Object>(\"select\")",         false)]
+        [DataRow("ctx.ExecuteQuery(typeof(Object), input)",      true)]
+        [DataRow("ctx.ExecuteQuery(typeof(Object), \"select\")", false)]
+        [DataRow("ctx.ExecuteCommand(input)",                        true)]
+        [DataRow("ctx.ExecuteCommand(\"select\")",                   false)]
+        [DataTestMethod]
+        public async Task LinqInjection(string sink, bool warn)
         {
-            var cSharpTest = @"
-using System.Data.Linq;
+            var cSharpTest = $@"
+#pragma warning disable 8019
+    using System.Data.Linq;
+    using System;
+    using System.Web.Mvc;
+#pragma warning restore 8019
 
 namespace VulnerableApp
-{
-
-    public class LyncInjectionFP
-    {
-        public static int Run(DataContext ctx,string city) {
-            var users = ctx.ExecuteQuery<UserEntity>(@""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                Address, City, Region, PostalCode, Country, Phone, Fax
-                FROM dbo.Users"");
-
+{{
+    public class LyncInjectionTP : Controller
+    {{
+        public int Run(DataContext ctx, string input) {{
+            {sink};
             return 0;
-        }
-    }
+        }}
+    }}
+}}";
+            sink = sink.CSharpReplaceToVBasic();
 
-    class UserEntity
-    {
-    }
-}
-";
-
-            var visualBasicTest = @"
-Imports System.Data.Linq
-
-Namespace VulnerableApp
-    Public Class LyncInjectionFP
-        Public Shared Function Run(ctx As DataContext, city As String) As Integer
-            Dim users = ctx.ExecuteQuery(Of UserEntity)(""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                                                          Address, City, Region, PostalCode, Country, Phone, Fax
-                                                          FROM dbo.Users"")
-            Return 0
-        End Function
-    End Class
-
-    Class UserEntity
-    End Class
-End Namespace
-";
-
-            await VerifyCSharpDiagnostic(cSharpTest).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
-        }
-
-        [TestMethod]
-        public async Task LinqInjectionVulnerableWithGeneric()
-        {
-            var cSharpTest = @"
-using System.Data.Linq;
-
-namespace VulnerableApp
-{
-
-    public class LyncInjectionTP
-    {
-        public static int Run(DataContext ctx,string city) {
-            var users = ctx.ExecuteQuery<UserEntity>(@""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                Address, City, Region, PostalCode, Country, Phone, Fax
-                FROM dbo.Users
-                WHERE  City = '"" + city+ ""'"");
-
-            return 0;
-        }
-    }
-
-    class UserEntity
-    {
-    }
-}
-        ";
-
-            var visualBasicTest = @"
-Imports System.Data.Linq
+            var visualBasicTest = $@"
+#Disable Warning BC50001
+    Imports System.Data.Linq
+    Imports System
+    Imports System.Web.Mvc
+#Enable Warning BC50001
 
 Namespace VulnerableApp
     Public Class LyncInjectionTP
-        Public Shared Function Run(ctx As DataContext, city As String) As Integer
-            Dim users = ctx.ExecuteQuery(Of UserEntity)(""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                                                          Address, City, Region, PostalCode, Country, Phone, Fax
-                                                          FROM dbo.Users
-                                                          WHERE City = '"" & city & ""'"")
-            Return 0
-        End Function
-    End Class
+        Inherits Controller
 
-    Class UserEntity
-    End Class
-End Namespace
-        ";
-
-            var expected = new DiagnosticResult
-            {
-                Id       = "SCS0002",
-                Severity = DiagnosticSeverity.Warning,
-            };
-
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
-        }
-
-        [TestMethod]
-        public async Task LinqInjectionFalsePositiveWithoutGeneric()
-        {
-            var cSharpTest = @"
-using System;
-using System.Data.Linq;
-
-namespace VulnerableApp
-{
-    public class LyncInjectionTP
-    {
-        public static int Run(DataContext ctx,string city) {
-            var users = ctx.ExecuteQuery(typeof(String),@""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                Address, City, Region, PostalCode, Country, Phone, Fax
-                FROM dbo.Users
-                WHERE  City = 'Montreal'"");
-
-            return 0;
-        }
-    }
-}
-        ";
-
-            var visualBasicTest = @"
-Imports System.Data.Linq
-
-Namespace VulnerableApp
-    Public Class LyncInjectionTP
-        Public Shared Function Run(ctx As DataContext, city As String) As Integer
-            Dim users = ctx.ExecuteQuery(GetType(String), ""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                                                            Address, City, Region, PostalCode, Country, Phone, Fax
-                                                            FROM dbo.Users
-                                                            WHERE City = 'Montreal'"")
-            Return 0
-        End Function
-    End Class
-End Namespace
-        ";
-
-            await VerifyCSharpDiagnostic(cSharpTest).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
-        }
-
-        [TestMethod]
-        public async Task LinqInjectionVulnerableWithoutGeneric()
-        {
-            var cSharpTest = @"
-using System;
-using System.Data.Linq;
-
-namespace VulnerableApp
-{
-    public class LyncInjectionTP
-    {
-        public static int Run(DataContext ctx,string city) {
-            var users = ctx.ExecuteQuery(typeof(String),@""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                Address, City, Region, PostalCode, Country, Phone, Fax
-                FROM dbo.Users
-                WHERE  City = '"" + city+ ""'"");
-
-            return 0;
-        }
-    }
-}
-        ";
-
-            var visualBasicTest = @"
-Imports System.Data.Linq
-
-Namespace VulnerableApp
-    Public Class LyncInjectionTP
-        Public Shared Function Run(ctx As DataContext, city As String) As Integer
-            Dim users = ctx.ExecuteQuery(GetType(String), ""SELECT CustomerID, CompanyName, ContactName, ContactTitle,
-                                                            Address, City, Region, PostalCode, Country, Phone, Fax
-                                                            FROM dbo.Users
-                                                            WHERE City = '"" & city & ""'"")
+        Public Function Run(ctx As DataContext, input As String) As Integer
+            {sink}
             Return 0
         End Function
     End Class
@@ -217,8 +79,17 @@ End Namespace
                 Severity = DiagnosticSeverity.Warning,
             };
 
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            if (warn)
+            {
+                await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
+                await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            }
+            else
+            {
+                await VerifyCSharpDiagnostic(cSharpTest).ConfigureAwait(false);
+                await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
+            }
         }
+
     }
 }

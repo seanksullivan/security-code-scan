@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SecurityCodeScan.Analyzers.Taint;
+using SecurityCodeScan.Test.Config;
 using SecurityCodeScan.Test.Helpers;
 using DiagnosticVerifier = SecurityCodeScan.Test.Helpers.DiagnosticVerifier;
 
@@ -12,22 +13,30 @@ namespace SecurityCodeScan.Test.Taint
     [TestClass]
     public class OpenRedirectAnalyzerTest : DiagnosticVerifier
     {
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new[] { new TaintAnalyzer() };
+            return new DiagnosticAnalyzer[] { new TaintAnalyzerCSharp(), new TaintAnalyzerVisualBasic(), };
         }
 
         private static readonly PortableExecutableReference[] References =
         {
             MetadataReference.CreateFromFile(typeof(System.Web.HttpResponse).Assembly.Location),
+            MetadataReference.CreateFromFile(typeof(System.Web.Mvc.ActionResult).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(Microsoft.AspNetCore.Http.HttpResponse).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(Microsoft.AspNetCore.Mvc.Controller).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(Microsoft.AspNetCore.Mvc.ControllerBase).Assembly.Location),
-            MetadataReference.CreateFromFile(typeof(System.Web.Mvc.ActionResult).Assembly.Location),
+            MetadataReference.CreateFromFile(typeof(Microsoft.AspNetCore.Mvc.IUrlHelper).Assembly.Location),
+        };
+
+        private DiagnosticResult Expected = new DiagnosticResult
+        {
+            Id       = "SCS0027",
+            Severity = DiagnosticSeverity.Warning,
         };
 
         protected override IEnumerable<MetadataReference> GetAdditionalReferences() => References;
 
+        [TestCategory("Detect")]
         [DataRow("System.Web",                "Response.Redirect(input)")]
         [DataRow("System.Web",                "Response.Redirect(input, true)")]
         [DataRow("System.Web",                "Response.RedirectPermanent(input)")]
@@ -44,7 +53,7 @@ class OpenRedirect
 {{
     public static HttpResponse Response = null;
 
-    public static void Run(string input)
+    public void Run(string input)
     {{
         {sink};
     }}
@@ -57,22 +66,24 @@ Imports {@namespace}
 Class OpenRedirect
     Public Shared Response As HttpResponse
 
-    Public Shared Sub Run(input As String)
+    Public Sub Run(input As String)
         {sink}
     End Sub
 End Class
 ";
 
-            var expected = new DiagnosticResult
-            {
-                Id       = "SCS0027",
-                Severity = DiagnosticSeverity.Warning,
-            };
+            var testConfig = @"
+TaintEntryPoints:
+  AAA:
+    ClassName: OpenRedirect
+";
 
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            var optionsWithProjectConfig = ConfigurationTest.CreateAnalyzersOptionsWithConfig(testConfig);
+            await VerifyCSharpDiagnostic(cSharpTest, Expected, optionsWithProjectConfig).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, Expected, optionsWithProjectConfig).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [DataRow("System.Web",                "Response.Redirect(\"\")")]
         [DataRow("System.Web",                "Response.Redirect(\"\", flag)")]
         [DataRow("System.Web",                "Response.RedirectPermanent(\"\")")]
@@ -89,7 +100,7 @@ class OpenRedirect
 {{
     public static HttpResponse Response = null;
 
-    public static void Run(bool flag)
+    public void Run(bool flag)
     {{
         {sink};
     }}
@@ -102,16 +113,24 @@ Imports {@namespace}
 Class OpenRedirect
     Public Shared Response As HttpResponse
 
-    Public Shared Sub Run(flag As Boolean)
+    Public Sub Run(flag As Boolean)
         {sink}
     End Sub
 End Class
 ";
 
-            await VerifyCSharpDiagnostic(cSharpTest).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
+            var testConfig = @"
+TaintEntryPoints:
+  AAA:
+    ClassName: OpenRedirect
+";
+
+            var optionsWithProjectConfig = ConfigurationTest.CreateAnalyzersOptionsWithConfig(testConfig);
+            await VerifyCSharpDiagnostic(cSharpTest, null, optionsWithProjectConfig).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, null, optionsWithProjectConfig).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [DataRow("System.Web.Mvc",           "Redirect(input)")]
         [DataRow("System.Web.Mvc",           "RedirectPermanent(input)")]
         [DataRow("Microsoft.AspNetCore.Mvc", "Redirect(input)")]
@@ -151,16 +170,11 @@ Public Class OpenRedirect
 End Class
 ";
 
-            var expected = new DiagnosticResult
-            {
-                Id       = "SCS0027",
-                Severity = DiagnosticSeverity.Warning,
-            };
-
-            await VerifyCSharpDiagnostic(cSharpTest, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest, Expected).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, Expected).ConfigureAwait(false);
         }
 
+        [TestCategory("Safe")]
         [DataRow("System.Web.Mvc",           "Redirect(\"\")")]
         [DataRow("System.Web.Mvc",           "RedirectPermanent(\"\")")]
         [DataRow("Microsoft.AspNetCore.Mvc", "Redirect(\"\")")]
@@ -173,6 +187,7 @@ End Class
         //[DataRow("Microsoft.AspNetCore.Mvc", "new RedirectResult(\"\", flag, flag)")]
         //[DataRow("Microsoft.AspNetCore.Mvc", "RedirectPreserveMethod(\"\")")]
         //[DataRow("Microsoft.AspNetCore.Mvc", "RedirectPermanentPreserveMethod(\"\")")]
+        [DataRow("System.Web.Mvc",           "Redirect(Url.RouteUrl(new {controller = input}) + \"#Id\")")]
         [DataTestMethod]
         public async Task OpenRedirectControllerConst(string @namespace, string sink)
         {
@@ -181,20 +196,21 @@ using {@namespace};
 
 class OpenRedirect : Controller
 {{
-    public ActionResult Run(bool flag)
+    public ActionResult Run(bool flag, string input)
     {{
         return {sink};
     }}
 }}
 ";
 
+            sink = sink.CSharpReplaceToVBasic();
             var visualBasicTest = $@"
 Imports {@namespace}
 
 Public Class OpenRedirect
     Inherits Controller
 
-    Public Function Run(flag As Boolean) as ActionResult
+    Public Function Run(flag As Boolean, input As System.String) as ActionResult
         Return {sink}
     End Function
 End Class
@@ -204,6 +220,7 @@ End Class
             await VerifyVisualBasicDiagnostic(visualBasicTest).ConfigureAwait(false);
         }
 
+        [TestCategory("Detect")]
         [DataRow("Microsoft.AspNetCore.Mvc")]
         [DataTestMethod]
         public async Task OpenRedirectController2(string @namespace)
@@ -248,30 +265,26 @@ Public Class OpenRedirect
 End Class
 ";
 
-            var expected = new DiagnosticResult
-            {
-                Id       = "SCS0027",
-                Severity = DiagnosticSeverity.Warning,
-            };
-
-            await VerifyCSharpDiagnostic(cSharpTest1, expected).ConfigureAwait(false);
-            await VerifyCSharpDiagnostic(cSharpTest2, expected).ConfigureAwait(false);
-            await VerifyVisualBasicDiagnostic(visualBasicTest, expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest1, Expected).ConfigureAwait(false);
+            await VerifyCSharpDiagnostic(cSharpTest2, Expected).ConfigureAwait(false);
+            await VerifyVisualBasicDiagnostic(visualBasicTest, Expected).ConfigureAwait(false);
         }
 
-        [DataRow("Microsoft.AspNetCore.Mvc")]
+        [TestCategory("Safe")]
+        [DataRow("Microsoft.AspNetCore.Mvc", "Url = \"\"")]
+        [DataRow("Microsoft.AspNetCore.Mvc", "Url = Url.RouteUrl(input)")]
         [DataTestMethod]
-        public async Task OpenRedirectController2Const(string @namespace)
+        public async Task OpenRedirectController2Const(string @namespace, string sink)
         {
             var cSharpTest1 = $@"
 using {@namespace};
 
 class OpenRedirect : Controller
 {{
-    public ActionResult Run()
+    public ActionResult Run(string input)
     {{
         var a = new RedirectResult("""");
-        a.Url = """";
+        a.{sink};
         return a;
     }}
 }}
@@ -284,7 +297,7 @@ class OpenRedirect : Controller
 {{
     public ActionResult Run(string input)
     {{
-        return new RedirectResult("""") {{Url = """"}};
+        return new RedirectResult("""") {{{sink}}};
     }}
 }}
 ";
@@ -295,9 +308,9 @@ Imports {@namespace}
 Public Class OpenRedirect
     Inherits Controller
 
-    Public Function Run() as ActionResult
+    Public Function Run(input As String) as ActionResult
         Dim a As New RedirectResult("""")
-        a.Url = """"
+        a.{sink}
         Return a
     End Function
 End Class

@@ -8,36 +8,50 @@ using VB = Microsoft.CodeAnalysis.VisualBasic;
 
 namespace SecurityCodeScan.Analyzers
 {
-    [DiagnosticAnalyzer(LanguageNames.CSharp, LanguageNames.VisualBasic)]
-    public class RequestValidationAnalyzer : DiagnosticAnalyzer
+    [DiagnosticAnalyzer(LanguageNames.CSharp)]
+    public class RequestValidationAnalyzerCSharp : RequestValidationAnalyzer
     {
-        private static readonly DiagnosticDescriptor                 Rule = LocaleUtil.GetDescriptor("SCS0017");
-        private static readonly DiagnosticDescriptor                 InheritanceRule = LocaleUtil.GetDescriptor("SCS0017", "title_base");
-        public override         ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(Rule, InheritanceRule);
-
         public override void Initialize(AnalysisContext context)
         {
             context.RegisterSyntaxNodeAction(ctx => CheckAllowHtml(ctx, CSharpSyntaxNodeHelper.Default),     CSharp.SyntaxKind.PropertyDeclaration);
-            context.RegisterSyntaxNodeAction(ctx => CheckAllowHtml(ctx, VBSyntaxNodeHelper.Default),         VB.SyntaxKind.PropertyBlock);
             context.RegisterSyntaxNodeAction(ctx => CheckUnvalidated(ctx, CSharpSyntaxNodeHelper.Default),   CSharp.SyntaxKind.SimpleMemberAccessExpression);
-            context.RegisterSyntaxNodeAction(ctx => CheckUnvalidated(ctx, VBSyntaxNodeHelper.Default),       VB.SyntaxKind.SimpleMemberAccessExpression);
             context.RegisterSyntaxNodeAction(ctx => CheckValidateInput(ctx, CSharpSyntaxNodeHelper.Default), CSharp.SyntaxKind.MethodDeclaration);
+            context.RegisterSyntaxNodeAction(ctx => CheckValidateInput(ctx, CSharpSyntaxNodeHelper.Default), CSharp.SyntaxKind.ClassDeclaration);
+            base.Initialize(context);
+        }
+    }
+
+    [DiagnosticAnalyzer(LanguageNames.VisualBasic)]
+    public class RequestValidationAnalyzerVisualBasic : RequestValidationAnalyzer
+    {
+        public override void Initialize(AnalysisContext context)
+        {
+            context.RegisterSyntaxNodeAction(ctx => CheckAllowHtml(ctx, VBSyntaxNodeHelper.Default),         VB.SyntaxKind.PropertyBlock);
+            context.RegisterSyntaxNodeAction(ctx => CheckUnvalidated(ctx, VBSyntaxNodeHelper.Default),       VB.SyntaxKind.SimpleMemberAccessExpression);
             context.RegisterSyntaxNodeAction(ctx => CheckValidateInput(ctx, VBSyntaxNodeHelper.Default),     VB.SyntaxKind.FunctionBlock);
             context.RegisterSyntaxNodeAction(ctx => CheckValidateInput(ctx, VBSyntaxNodeHelper.Default),     VB.SyntaxKind.SubBlock);
-            context.RegisterSyntaxNodeAction(ctx => CheckValidateInput(ctx, CSharpSyntaxNodeHelper.Default), CSharp.SyntaxKind.ClassDeclaration);
             context.RegisterSyntaxNodeAction(ctx => CheckValidateInput(ctx, VBSyntaxNodeHelper.Default),     VB.SyntaxKind.ClassBlock);
+            base.Initialize(context);
+        }
+    }
+
+    public abstract class RequestValidationAnalyzer : DiagnosticAnalyzer
+    {
+        private static readonly DiagnosticDescriptor                 Rule = LocaleUtil.GetDescriptor("SCS0017");
+        private static readonly DiagnosticDescriptor                 InheritanceRule = LocaleUtil.GetDescriptor("SCS0017", "title_base");
+        public override         ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule, InheritanceRule);
+
+        public override void Initialize(AnalysisContext context)
+        {
             context.RegisterSymbolAction(CheckValidateInputInheritance, SymbolKind.NamedType);
         }
 
-        private void CheckAllowHtml(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
+        protected void CheckAllowHtml(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
         {
             var attributes = nodeHelper.GetDeclarationAttributeNodes(ctx.Node);
 
             foreach (var attribute in attributes)
             {
-                if (!nodeHelper.GetNameNode(attribute).ToString().Contains("AllowHtml"))
-                    continue;
-
                 var attributeSymbols = ctx.SemanticModel.GetSymbolInfo(attribute).Symbol;
                 if (attributeSymbols == null)
                     continue;
@@ -51,9 +65,9 @@ namespace SecurityCodeScan.Analyzers
             }
         }
 
-        private void CheckUnvalidated(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
+        protected void CheckUnvalidated(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
         {
-            var name = nodeHelper.GetNameNode(ctx.Node);
+            var name = nodeHelper.GetMemberAccessNameNode(ctx.Node);
             if (name.ToString() != "Unvalidated")
                 return;
 
@@ -66,18 +80,15 @@ namespace SecurityCodeScan.Analyzers
                 ctx.ReportDiagnostic(Diagnostic.Create(Rule, name.GetLocation()));
         }
 
-        private void CheckValidateInput(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
+        protected void CheckValidateInput(SyntaxNodeAnalysisContext ctx, SyntaxNodeHelper nodeHelper)
         {
             foreach (var attribute in nodeHelper.GetDeclarationAttributeNodes(ctx.Node))
             {
-                if (!nodeHelper.GetNameNode(attribute).ToString().Contains("ValidateInput"))
-                    continue;
-
                 var hasArgumentFalse = false;
                 SyntaxNode expression = null;
                 foreach (var arg in nodeHelper.GetAttributeArgumentNodes(attribute))
                 {
-                    expression = nodeHelper.GetAttributeArgumentExpresionNode(arg);
+                    expression = nodeHelper.GetAttributeArgumentExpressionNode(arg);
                     var expressionValue = ctx.SemanticModel.GetConstantValue(expression);
                     if (!expressionValue.HasValue)
                         continue;
@@ -105,7 +116,7 @@ namespace SecurityCodeScan.Analyzers
             }
         }
 
-        private void CheckValidateInputInheritance(SymbolAnalysisContext ctx)
+        protected void CheckValidateInputInheritance(SymbolAnalysisContext ctx)
         {
             var classSymbol = (ITypeSymbol)ctx.Symbol;
             if (!classSymbol.IsDerivedFrom("System.Web.Mvc.ControllerBase"))

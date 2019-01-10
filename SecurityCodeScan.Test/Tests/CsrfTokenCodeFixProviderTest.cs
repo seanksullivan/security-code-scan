@@ -25,7 +25,7 @@ namespace SecurityCodeScan.Test.AntiCsrf
             var before = $@"
 using {Namespace};
 
-public class TestController
+public class TestController : Controller
 {{
 
     //Test comment
@@ -39,7 +39,7 @@ public class TestController
             var after = $@"
 using {Namespace};
 
-public class TestController
+public class TestController : Controller
 {{
 
     //Test comment
@@ -68,9 +68,13 @@ public class TestController
 
         protected override IEnumerable<MetadataReference> GetAdditionalReferences() => References;
 
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new[] { new MvcCsrfTokenAnalyzer() };
+            return new DiagnosticAnalyzer[]
+            {
+                new MvcCsrfTokenAnalyzerCSharp(),
+                new MvcCsrfTokenAnalyzerVBasic()
+            };
         }
     }
 
@@ -87,9 +91,13 @@ public class TestController
 
         protected override IEnumerable<MetadataReference> GetAdditionalReferences() => References;
 
-        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers()
+        protected override IEnumerable<DiagnosticAnalyzer> GetDiagnosticAnalyzers(string language)
         {
-            return new[] { new CoreCsrfTokenAnalyzer() };
+            return new DiagnosticAnalyzer[]
+            {
+                new CoreCsrfTokenAnalyzerCSharp(),
+                new CoreCsrfTokenAnalyzerVBasic()
+            };
         }
     }
 }
